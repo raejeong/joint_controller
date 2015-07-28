@@ -4,25 +4,30 @@
  * Author :: Rae Jeong
  * Email  :: raychanjeong@gmail.com
  */
-
 #include <Encoder.h> 
-#include <AltSoftSerial.h>
+#include <SoftwareSerial.h>
 #include <PID_v1.h>
-#include <ros.h>
-#include <sensor_msgs/JointState.h>
-#include <std_msgs/Float32.h>
+#include <ros.h> // Working in rosserial catkin. For future ROS implemantation
 #include <Arduino.h>
+#include <Wire.h>
+#include <I2C_Anything.h>
 
+/*
+ * Address
+ */
+
+const uint8_t ADDRESS = 1;
 
 /*
  * Function prototypes
  */
-void positionCb(const std_msgs::Float32& position_msg);
 boolean limitSwitch();
 void calibration();
 float mapFloat(float x, float in_min, float in_max,
 	       float out_min, float out_max);
 float encoderRead();
+void setSetPoint(int how_many);
+void sendPosition();
 
 
 /* 
@@ -54,6 +59,8 @@ double set_point;
 double input;
 double output;
 
+double new_set_point = 0;
+
 
 /*
  * Reading Encoder data from pin 2 and 3. Note that we use 2 and 3 on an UNO
@@ -66,87 +73,58 @@ Encoder myEnc(enc_pin_a, enc_pin_b);
  * Software Serial for communicating with the Syren 25A motor controller at
  * baud rate of 9600, using pin 4 and 5.
  */
-AltSoftSerial mySerial(my_serial_pin_rx, my_serial_pin_tx); 
-
+SoftwareSerial mySerial(my_serial_pin_rx, my_serial_pin_tx); 
 
 /*
  * PID controller for position control
  */
-PID myPID(&input, &output, &set_point, 1, 1, 1, DIRECT);
-
-
-/*
- * ROS Node
- */
-ros::NodeHandle nh;
-
-/*
- * JointState message for publishing
- */
-sensor_msgs::JointState joint_state_msg;
-
-/*
- * Publisher and Subscribers respectively: joint_state_publisher and position
- * listener with postionCb as the call back function
- */
-ros::Publisher joint_state_publisher("joint_state", &joint_state_msg);
-ros::Subscriber<std_msgs::Float32> position_listener("position", &positionCb);
+PID myPID(&input, &output, &set_point, 2, 0, 0, DIRECT);
 
 
 void setup()
 {
-  /*
-   * By default, the JointState message has it's variables as an array with 0
-   * legnth. Usually we use resize() to change the length of the array but in
-   * the Ardino ros implemation because its memory and computational
-   * limitations, there is a variable that stores the length. Hense,
-   * position_length.
-   */
-  joint_state_msg.position_length = 1;
-
-  set_point  = 0.0; // Default position
-
-  mySerial.begin(19200); // Serial commuication to motor controller start.
+  Wire.begin(ADDRESS);
+  Wire.onReceive(setSetPoint);
+  Wire.onRequest(sendPosition);
 
   pinMode(limit_switch_pin, INPUT); 
+
+  mySerial.begin(9600); // Serial commuication to motor controller start.
+
+  set_point = 0.0;
+
+  calibration(); // Running the calibration code on every start up
 
   input = encoderRead();
 
   myPID.SetMode(AUTOMATIC);
-  myPID.SetOutputLimits(max_reverse-motor_stop, max_forward-motor_stop);
-  
-  calibration(); // Running the calibration code on every start up
-
-  nh.initNode();
-  nh.advertise(joint_state_publisher);
-  nh.subscribe(position_listener);
-
+  myPID.SetOutputLimits(-127, 127);
+  myPID.SetSampleTime(20);
 }
 
 
 void loop()
 {
   input = encoderRead();
-
-  joint_state_msg.position[0] = input;
-  joint_state_publisher.publish(&joint_state_msg);
-  
   myPID.Compute();
-  mySerial.write(output+motor_stop);
+  double motorInput;
+  if (output < -1)
+  {
+    motorInput = (117.0/127.0)*output -10;
+  }
+  else if (output > 1)
+  {
+    motorInput = (117.0/127.0)*output +10;
+  }
+  else
+  {
+    motorInput = output;
+  }
 
-  delay(10);
+  motorInput = motorInput+127.0;
 
-  nh.spinOnce();
-}
-
-
-/*
- * Called when there is new msg on the position topic. Updates the position
- * value with the new position msg value
- */
-void positionCb( const std_msgs::Float32& position_msg)
-{
-  set_point = position_msg.data;
+  mySerial.write((int)motorInput);
+  delay(120);
 }
 
 
@@ -176,8 +154,9 @@ void calibration()
     {
       mySerial.write(max_reverse);
     }
-    delay(100);
   }
+
+  delay(100);
   
   // Go forward until the motor triggers the limit switch.
   while(!limitSwitch())
@@ -214,3 +193,26 @@ float encoderRead()
 {
   return mapFloat(myEnc.read(), 0, 5260, 0, 360);
 }
+
+
+/*
+ * Setting a new set_point for position of the joint
+ */
+void setSetPoint(int how_many)
+{
+  if(how_many >= (sizeof new_set_point))
+  {
+    I2C_readAnything(new_set_point);
+    set_point = new_set_point;
+  }
+}
+
+
+/*
+ * sending position, have to find a good way to send float
+ */
+void sendPosition()
+{
+  Wire.write((int)input);
+}
+
