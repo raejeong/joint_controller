@@ -78,7 +78,7 @@ SoftwareSerial mySerial(my_serial_pin_rx, my_serial_pin_tx);
 /*
  * PID controller for position control
  */
-PID myPID(&input, &output, &set_point, 2, 0, 0, DIRECT);
+PID myPID(&input, &output, &set_point, 3, 0, 0, DIRECT);
 
 
 void setup()
@@ -110,11 +110,11 @@ void loop()
   double motorInput;
   if (output < -1)
   {
-    motorInput = (117.0/127.0)*output -10;
+    motorInput = (112.0/127.0)*output -15;
   }
   else if (output > 1)
   {
-    motorInput = (117.0/127.0)*output +10;
+    motorInput = (112.0/127.0)*output +15;
   }
   else
   {

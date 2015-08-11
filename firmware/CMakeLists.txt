@@ -10,6 +10,6 @@ include_directories(
 
 generate_arduino_firmware(joint_controller
   SRCS joint_controller.cpp ${ROS_LIB_DIR}/time.cpp
-  BOARD uno
-  PORT /dev/ttyACM0
+  BOARD pro5v328
+  PORT /dev/ttyUSB0
 )
