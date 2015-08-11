@@ -1,0 +1,3 @@
+[submodule "firmware/libraries/WireData"]
+	path = firmware/libraries/WireData
+	url = https://github.com/bhagman/WireData.git
