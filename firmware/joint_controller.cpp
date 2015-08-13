@@ -111,7 +111,7 @@ SoftwareSerial mySerial(my_serial_pin_rx, my_serial_pin_tx);
 /*
  * PID controller for position control
  */
-PID myPID(&input, &output, &set_point, 3, 0, 0, DIRECT);
+PID myPID(&input, &output, &setpoint, DEFAULT_KP, 0, 0, DIRECT);
 
 
 /*
@@ -121,7 +121,8 @@ uint8_t i2cCommand = I2C_COMMAND_NULL;
 uint8_t direction = DIRECTION_CLOCKWISE;
 uint8_t calibrationDirection = DIRECTION_CLOCKWISE;
 boolean calibrated = false;
-double kp = DEFAULT_KP;
+double new_kP = DEFAULT_KP;
+double old_kP = DEFAULT_KP;
 
 
 void setup()
@@ -149,6 +150,13 @@ void setup()
 void loop()
 {
   input = encoderRead();
+
+  if(new_kP != old_kP)
+  {
+      myPID.SetTunings(new_kP,0,0);
+      old_kP = new_kP;
+  }
+
   myPID.Compute();
   double motorInput;
   if (output < -1)
@@ -245,22 +253,22 @@ void i2cRequest()
 {
   switch (i2cCommand)
   {
-    case I2C_COMMAND_JOINT_GET_SETPOINT         :
+    case I2C_COMMAND_JOINT_GET_SETPOINT:
       wireWriteData(setpoint);
       break;
-    case I2C_COMMAND_JOINT_GET_POSITION         :
+    case I2C_COMMAND_JOINT_GET_POSITION:
       wireWriteData(input);
       break;
-    case I2C_COMMAND_JOINT_GET_KP               :
-      wireWriteData(kp);
+    case I2C_COMMAND_JOINT_GET_KP:
+	wireWriteData(old_kP);
       break;
     case I2C_COMMAND_JOINT_GET_CALIBRATION_STATE:
       wireWriteData(calibrated);
       break;
-    case I2C_COMMAND_JOINT_GET_DIRECTION        :
+    case I2C_COMMAND_JOINT_GET_DIRECTION:
       wireWriteData(direction);
       break;
-    case I2C_COMMAND_JOINT_GET_CAL_DIRECTION    :
+    case I2C_COMMAND_JOINT_GET_CAL_DIRECTION:
       wireWriteData(calibrationDirection);
       break;
     default:
@@ -283,28 +291,30 @@ void i2cReceive(int byteCount)
       i2cCommand = I2C_COMMAND_NULL;  // clear the command, since we have completed all processing (set)
       break;
 
-    //case I2C_COMMAND_JOINT_GET_SETPOINT:  // Each of the GETs are handled in the Wire request handler
-    //case I2C_COMMAND_JOINT_GET_POSITION:
     case I2C_COMMAND_JOINT_SET_KP:
-      wireReadData(kp);
+	wireReadData(new_kP);
       // TODO: set KP value in PID
       i2cCommand = I2C_COMMAND_NULL;
       break;
 
-    //case I2C_COMMAND_JOINT_GET_KP:
-    //case I2C_COMMAND_JOINT_GET_CALIBRATION_STATE:
-    //case I2C_COMMAND_JOINT_GET_DIRECTION:
     case I2C_COMMAND_JOINT_SET_DIRECTION:
       wireReadData(direction);
       // TODO: any post processing for direction change
       i2cCommand = I2C_COMMAND_NULL;
       break;
 
-    //case I2C_COMMAND_JOINT_GET_CAL_DIRECTION:
     case I2C_COMMAND_JOINT_SET_CAL_DIRECTION:
       wireReadData(calibrationDirection);
       // TODO: any post processing for calibration direction change
       i2cCommand = I2C_COMMAND_NULL;
+      break;
+
+    case I2C_COMMAND_JOINT_GET_SETPOINT:  // Each of the GETs are handled in the Wire request handler
+    case I2C_COMMAND_JOINT_GET_POSITION:
+    case I2C_COMMAND_JOINT_GET_KP:
+    case I2C_COMMAND_JOINT_GET_CALIBRATION_STATE:
+    case I2C_COMMAND_JOINT_GET_DIRECTION:
+    case I2C_COMMAND_JOINT_GET_CAL_DIRECTION:
       break;
 
     case I2C_COMMAND_JOINT_CALIBRATE:
