@@ -28,9 +28,9 @@
 #define PRESCALER             64.0
 
 // PID Default Constants
-#define DEFAULT_POS_KP        1.5
+#define DEFAULT_POS_KP        0.25
 #define DEFAULT_POS_KI        0.0
-#define DEFAULT_POS_KD        (-0.01)
+#define DEFAULT_POS_KD        0.0
 
 #define DEFAULT_VELO_KP       0
 #define DEFAULT_VELO_KD       0
@@ -63,7 +63,7 @@ struct PID {
 };
 
 // 7 bit I2C/TWI addresses are in the range of 0x08 to 0x77
-extern const uint8_t myAddress = 0x08;
+extern const uint8_t myAddress = 0x09;
 
 // Position Data
 float setpoint = 700;             
@@ -243,8 +243,8 @@ int getMotorInput(float PID_raw)
   
   // If rae PID value is greater than a tolerance, scale it
   // 1 - 127 is mapped to 15 - 127
-  else if (PID_raw < -1)    { return (int)((112.0/127.0)*PID_raw-15)+127.0; }
-  else if (PID_raw > 1)     { return (int)((112.0/127.0)*PID_raw+15)+127; }
+  else if (PID_raw < -1.0)    { return (int)((112.0/127.0)*PID_raw-15)+127.0; }
+  else if (PID_raw > 1.0)     { return (int)((112.0/127.0)*PID_raw+15)+127; }
   
   // if raw PID value is too small, return 127
   else                      { return 127; }
