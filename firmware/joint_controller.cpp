@@ -20,17 +20,18 @@
 #define I2C_COMMAND_JOINT_HALT                  12
 #define I2C_COMMAND_JOINT_HOME                  13
 #define I2C_COMMAND_JOINT_MOTOR_OFF             14
+#define I2C_COMMAND_JOINT_READY                 15
 
 // PID ISR defines
 #define ISR_PERIOD            0.002
-#define ISR_FREQ              500 // (1/ISR_PERIOD)
+#define ISR_FREQ              100 // (1/ISR_PERIOD)
 #define CLOCK_SPEED           16000000.0
 #define PRESCALER             64.0
 
 // PID Default Constants
-#define DEFAULT_POS_KP        0.25
-#define DEFAULT_POS_KI        0.0
-#define DEFAULT_POS_KD        0.0
+#define DEFAULT_POS_KP        0.2
+#define DEFAULT_POS_KI        0.001
+#define DEFAULT_POS_KD        (-0.001)
 
 #define DEFAULT_VELO_KP       0
 #define DEFAULT_VELO_KD       0
@@ -49,9 +50,14 @@
 #define POSITIVE              0
 #define NEGATIVE              1
 
+// Limits
+#define MAX_LIM               800
+#define MIN_LIM               200
+
 // Other Constants
 #define POSITION_LOG_SIZE     5
 #define PRINT_PERIOD          500   // printing loop period in ms
+#define MAX_VELO              126
 
 // Encapsulate all the data needed for computePID()
 struct PID {
@@ -63,10 +69,10 @@ struct PID {
 };
 
 // 7 bit I2C/TWI addresses are in the range of 0x08 to 0x77
-extern const uint8_t myAddress = 0x09;
+extern const uint8_t myAddress = 0x0a;
 
 // Position Data
-float setpoint = 700;             
+float setpoint;             
 int position_log[POSITION_LOG_SIZE];
 int position_log_index = 0;
 float running_position_avg = 0;
@@ -84,7 +90,7 @@ unsigned long debug_time_stamp_2;
 
 // I2C Data
 uint8_t i2cCommand = I2C_COMMAND_NULL;
-
+float i2cByte = 0;
 
 // Software Serial Object for Comm. with Driver
 SoftwareSerial driverSerial(SERIAL_RX_PIN, SERIAL_TX_PIN); 
@@ -102,10 +108,6 @@ float computePID(struct PID *pid, float error, int deltaT);
 void i2cRequest();
 void i2cReceive(int byteCount);
 
-  
-  
-  
-  
 void setup()
 {
   Wire.begin(myAddress);
@@ -117,30 +119,43 @@ void setup()
   
   //Starts Serial to communicate with driver
   driverSerial.begin(SOFTWARE_BAUD_RATE);
-  
+
   // Set GPIO Pins
   pinMode(ENCODER_PIN, INPUT);
   pinMode(SERIAL_RX_PIN, INPUT);
   pinMode(SERIAL_TX_PIN, OUTPUT);
-
+  
   // Read in current position of joint
   position_log[position_log_index] = analogRead(A0);
+  if (position_log[position_log_index] < MAX_LIM && position_log[position_log_index] > MIN_LIM)
+  {
+    setpoint = position_log[position_log_index];
+    
+    // Set some default PID Constants
+    position_PID.kP = DEFAULT_POS_KP;
+    position_PID.kI = DEFAULT_POS_KI;
+    position_PID.kD = DEFAULT_POS_KD;
   
-  // Set some default PID Constants
-  position_PID.kP = DEFAULT_POS_KP;
-  position_PID.kI = DEFAULT_POS_KI;
-  position_PID.kD = DEFAULT_POS_KD;
+    // Call function to setup Timer1 for Compare Match Interrupts
+    setup_Timer1(PRESCALER);
+    //Serial.println(OCR1A);
+  
+    // Initialize the position log array to 0
+    for (int i = 0; i < POSITION_LOG_SIZE; i++) { position_log[i] = 0; }
+  
+    // Send 0 speed directive to motor, just in case
+    driverSerial.write(127);
+  }
+  else
+  {
+    driverSerial.write(127);
+    driverSerial.end();
+    //Serial.print("OUT OF BOUNDS, MOVE TO BOUNDS AND RESTART!!!");
+    //Serial.end();
+  }
+  
 
-  
-  // Call function to setup Timer1 for Compare Match Interrupts
-  setup_Timer1(PRESCALER);
-  //Serial.println(OCR1A);
 
-  // Initialize the position log array to 0
-  for (int i = 0; i < POSITION_LOG_SIZE; i++) { position_log[i] = 0; }
-  
-  // Send 0 speed directive to motor, just in case
-  driverSerial.write(127);
   
   // record current time stamp
   last_loop_time_stamp = millis();
@@ -153,31 +168,29 @@ void loop()
   //Serial.println( millis() - last_loop_time_stamp );
 
   // if its been enough time since last print, enter print sequence
-  //if (millis() - last_loop_time_stamp >= PRINT_PERIOD)
-  //{
+  /*
+  if (millis() - last_loop_time_stamp >= PRINT_PERIOD)
+  {
     // Store Timestamp
-    //last_loop_time_stamp = millis();
+    last_loop_time_stamp = millis();
    
     // If there's incoming data, assume its a setpoint and store it
-   // if (Serial.available()) { setpoint = Serial.parseFloat(); }
+   if (Serial.available()) { setpoint = Serial.parseFloat(); }
 
     // Print current status for debugging
-   // Serial.print( running_position_avg ); //running_position_avg  );
-    //Serial.print("    ");
-   // Serial.print(setpoint);
-   // Serial.print("    ");
-    //Serial.print(motor_torque);
-    //Serial.print("    ");
-    //Serial.print(output + 127); 
-    //Serial.print("    ");
-    //Serial.print(1 / position_PID.dt, 9);
-    //Serial.print("    ");
- 
-  //}
+   Serial.print( running_position_avg ); //running_position_avg  );
+   Serial.print("    ");
+   Serial.print(setpoint);
+   Serial.print("    ");
+   Serial.print(motor_torque);
+   Serial.print("    ");
+   Serial.print(output + 127); 
+   Serial.print("    ");
+   Serial.print(1 / position_PID.dt, 9);
+   Serial.println("    ");
+  }
+  */
 }
-
-
-
 
 
 // Applies PID Feedback calculations
@@ -203,48 +216,56 @@ ISR(TIMER1_COMPA_vect)
   debug_time_stamp_1 = micros();
   
   // Remove the weight of the oldest element from average
-  running_position_avg -= 1.0*position_log[position_log_index]/POSITION_LOG_SIZE;
+  //running_position_avg -= 1.0*position_log[position_log_index]/POSITION_LOG_SIZE;
   
   // Read in new element, and overwrite oldest element
-  position_log[position_log_index] = analogRead(A0);
+  //position_log[position_log_index] = analogRead(A0);
   
   // Add in weight of newest element to average
-  running_position_avg += 1.0*position_log[position_log_index]/POSITION_LOG_SIZE;
+  //running_position_avg += 1.0*position_log[position_log_index]/POSITION_LOG_SIZE;
   
   // increment position log index // reset to 0 if it hits 10
-  position_log_index = (position_log_index+1)%POSITION_LOG_SIZE;
+  //position_log_index = (position_log_index+1)%POSITION_LOG_SIZE;
   
+  running_position_avg = 0;
+  
+  for (int i = 0; i < POSITION_LOG_SIZE; i++) { running_position_avg += analogRead(A0); }
+
+  running_position_avg = running_position_avg/POSITION_LOG_SIZE;
+  
+
   // Get output from PID Controller based on current conditions
   output = computePID(  &position_PID, 
                         running_position_avg - setpoint,
                         micros() - last_ISR_time_stamp );
-  
-  
-  
+
   // Store the timestamp of this interrupt sequence
   last_ISR_time_stamp = micros();
   
-  
-  
   // Send the data to the motor driver
   motor_torque = getMotorInput(output);
+
+  if (setpoint > MAX_LIM || setpoint < MIN_LIM)
+    motor_torque = 127;
+
+  if (running_position_avg > MAX_LIM || running_position_avg < MIN_LIM)
+    motor_torque = 127;
+     
   driverSerial.write( motor_torque );   // might be able to combine into 1 line
   
-  
   debug_time_stamp_2 = micros() - debug_time_stamp_1;
-  
 }
 
 int getMotorInput(float PID_raw)
 {
   // If the raw PID value is outside bounds, cap it
-  if      (PID_raw > 127)   { return 255; }
-  else if (PID_raw < -127)  { return 0; }
+  if      (PID_raw > MAX_VELO)   { return 127 + MAX_VELO; }
+  else if (PID_raw < -MAX_VELO)  { return 127 - MAX_VELO; }
   
   // If rae PID value is greater than a tolerance, scale it
   // 1 - 127 is mapped to 15 - 127
-  else if (PID_raw < -1.0)    { return (int)((112.0/127.0)*PID_raw-15)+127.0; }
-  else if (PID_raw > 1.0)     { return (int)((112.0/127.0)*PID_raw+15)+127; }
+  else if (PID_raw < -1.0)    { return (int)((117.0/127.0)*PID_raw-10)+127.0; }
+  else if (PID_raw > 1.0)     { return (int)((117.0/127.0)*PID_raw+10)+127.0; }
   
   // if raw PID value is too small, return 127
   else                      { return 127; }
@@ -324,7 +345,9 @@ void i2cReceive(int byteCount)
   switch (i2cCommand)
   {
     case I2C_COMMAND_JOINT_SET_SETPOINT:
-      wireReadData(setpoint);
+      wireReadData(i2cByte);
+      if (i2cByte < MAX_LIM && i2cByte > MIN_LIM)
+        setpoint = i2cByte;
       i2cCommand = I2C_COMMAND_NULL;  // clear the command, since we have completed all processing (set)
       break;
 
@@ -354,5 +377,4 @@ void i2cReceive(int byteCount)
         break;
   }
 }
-
 
